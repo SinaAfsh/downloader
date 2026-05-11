@@ -1,0 +1,86 @@
+name: Manual download and commit file
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'لینک دانلود فایل (مستقیم)'
+        required: true
+        type: string
+      target_filename:
+        description: 'نام فایل برای ذخیره در ریپوزیتوری (اختیاری - خالی بگذارید خودکار تشخیص دهد)'
+        required: false
+        type: string
+      target_folder:
+        description: 'پوشه مقصد در ریپوزیتوری (مثال: downloads/ یا apk-files/)'
+        required: false
+        default: 'downloaded-files'
+        type: string
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # اجازه push به ریپوزیتوری
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract filename from URL
+        id: extract
+        run: |
+          URL="${{ github.event.inputs.download_url }}"
+          
+          # اگر کاربر نام فایل را وارد کرده باشد، از آن استفاده کن
+          if [ -n "${{ github.event.inputs.target_filename }}" ]; then
+            FILENAME="${{ github.event.inputs.target_filename }}"
+          else
+            # استخراج نام فایل از لینک (حذف کوئری استرینگ)
+            FILENAME=$(basename "$URL" | cut -d '?' -f1 | cut -d '#' -f1)
+            # اگر نام فایل خالی بود یا پسوند نداشت، از timestamp استفاده کن
+            if [ -z "$FILENAME" ] || [ "$FILENAME" = "/" ]; then
+              FILENAME="downloaded_$(date +'%Y%m%d_%H%M%S')"
+            fi
+          fi
+          
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          echo "folder=${{ github.event.inputs.target_folder }}" >> $GITHUB_OUTPUT
+
+      - name: Download file (supports zip, json, apk, etc.)
+        run: |
+          FOLDER="${{ steps.extract.outputs.folder }}"
+          FILE_PATH="$FOLDER/${{ steps.extract.outputs.filename }}"
+          
+          # ساخت پوشه اگر وجود ندارد
+          mkdir -p "$FOLDER"
+          
+          # دانلود فایل (با دنبال کردن redirectها)
+          curl -L --progress-bar -o "$FILE_PATH" "${{ github.event.inputs.download_url }}"
+          
+          # بررسی موفقیت دانلود
+          if [ $? -ne 0 ]; then
+            echo "❌ Download failed!"
+            exit 1
+          fi
+          
+          # نمایش اندازه و نوع فایل
+          echo "✅ Downloaded: $FILE_PATH"
+          ls -lh "$FILE_PATH"
+          file "$FILE_PATH"
+
+      - name: Commit and push to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          
+          # بررسی تغییرات
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+          else
+            git commit -m "Add file: ${{ steps.extract.outputs.filename }} (downloaded from ${{ github.event.inputs.download_url }})"
+            git push
+            echo "✅ File pushed to repository"
+          fi
