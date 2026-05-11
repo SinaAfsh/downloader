@@ -1,4 +1,4 @@
-name: Manual download and commit file
+name: Downloader-Manual download and commit file
 
 on:
   workflow_dispatch:
